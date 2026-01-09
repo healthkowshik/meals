@@ -49,9 +49,8 @@ def start_meal(meal_type: MealType) -> str:
 
     meal_entry = {
         "type": meal_type,
-        "date": now.strftime("%Y-%m-%d"),
-        "start_time": now.strftime("%H:%M:%S"),
-        "end_time": None,
+        "start_datetime": now.isoformat(),
+        "end_datetime": None,
     }
 
     data["meals"].append(meal_entry)
@@ -70,37 +69,40 @@ def end_meal(meal_type: MealType) -> str:
     """
     data = load_data()
     now = datetime.now()
-    today = now.strftime("%Y-%m-%d")
 
-    # Find the most recent meal of this type today that hasn't ended
+    # Find the most recent meal of this type that hasn't ended
     for meal in reversed(data["meals"]):
-        if (
-            meal["type"] == meal_type
-            and meal["date"] == today
-            and meal["end_time"] is None
-        ):
-            meal["end_time"] = now.strftime("%H:%M:%S")
+        if meal["type"] == meal_type and meal["end_datetime"] is None:
+            meal["end_datetime"] = now.isoformat()
             save_data(data)
             return f"Finished {meal_type} at {now.strftime('%H:%M')}"
 
-    return f"No active {meal_type} found for today. Did you forget to start it?"
+    return f"No active {meal_type} found. Did you forget to start it?"
 
 
 @mcp.tool
 def get_meals_today() -> str:
     """Get all meals logged for today."""
     data = load_data()
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = datetime.now().date()
 
-    today_meals = [m for m in data["meals"] if m["date"] == today]
+    today_meals = [
+        m for m in data["meals"]
+        if datetime.fromisoformat(m["start_datetime"]).date() == today
+    ]
 
     if not today_meals:
         return "No meals logged today."
 
     lines = [f"Meals for {today}:"]
     for meal in today_meals:
-        start = meal["start_time"][:5]  # HH:MM
-        end = meal["end_time"][:5] if meal["end_time"] else "ongoing"
+        start_dt = datetime.fromisoformat(meal["start_datetime"])
+        start = start_dt.strftime("%H:%M")
+        if meal["end_datetime"]:
+            end_dt = datetime.fromisoformat(meal["end_datetime"])
+            end = end_dt.strftime("%H:%M")
+        else:
+            end = "ongoing"
         lines.append(f"  - {meal['type'].capitalize()}: {start} - {end}")
 
     return "\n".join(lines)
@@ -119,10 +121,11 @@ def get_meals_history(days: int = 7) -> str:
     if not data["meals"]:
         return "No meal history found."
 
-    # Group meals by date
+    # Group meals by start date
     meals_by_date: dict[str, list] = {}
     for meal in data["meals"]:
-        date = meal["date"]
+        start_dt = datetime.fromisoformat(meal["start_datetime"])
+        date = start_dt.strftime("%Y-%m-%d")
         if date not in meals_by_date:
             meals_by_date[date] = []
         meals_by_date[date].append(meal)
@@ -137,8 +140,13 @@ def get_meals_history(days: int = 7) -> str:
     for date in sorted_dates:
         lines.append(f"\n{date}:")
         for meal in meals_by_date[date]:
-            start = meal["start_time"][:5]
-            end = meal["end_time"][:5] if meal["end_time"] else "ongoing"
+            start_dt = datetime.fromisoformat(meal["start_datetime"])
+            start = start_dt.strftime("%H:%M")
+            if meal["end_datetime"]:
+                end_dt = datetime.fromisoformat(meal["end_datetime"])
+                end = end_dt.strftime("%H:%M")
+            else:
+                end = "ongoing"
             lines.append(f"  - {meal['type'].capitalize()}: {start} - {end}")
 
     return "\n".join(lines)
