@@ -5,100 +5,99 @@ An MCP server to track meal times (breakfast, lunch, dinner).
 Users can log when they start and finish a meal, and retrieve their meal history.
 """
 
-import json
+import os
 from datetime import datetime
-from pathlib import Path
 from typing import Literal
 
-from fastmcp import FastMCP
+from fastmcp import FastMCP, Context
+from supabase import create_client, Client
 
 mcp = FastMCP("Meals Tracker")
 
-# Data storage path
-DATA_DIR = Path(__file__).parent / "data"
-DATA_FILE = DATA_DIR / "meals.json"
+# Supabase client
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 
 MealType = Literal["breakfast", "lunch", "dinner"]
 
 
-def load_data() -> dict:
-    """Load meal data from JSON file."""
-    if DATA_FILE.exists():
-        with open(DATA_FILE, "r") as f:
-            return json.load(f)
-    return {"meals": []}
+def get_supabase() -> Client:
+    """Get Supabase client."""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        raise ValueError("SUPABASE_URL and SUPABASE_KEY environment variables required")
+    return create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
-def save_data(data: dict) -> None:
-    """Save meal data to JSON file."""
-    DATA_DIR.mkdir(exist_ok=True)
-    with open(DATA_FILE, "w") as f:
-        json.dump(data, f, indent=2)
+def get_user_id(ctx: Context) -> str:
+    """Get user ID from context, fallback to client_id."""
+    return ctx.client_id or "anonymous"
 
 
 @mcp.tool
-def start_meal(meal_type: MealType) -> str:
+def start_meal(meal_type: MealType, ctx: Context) -> str:
     """
     Log the start of a meal.
 
     Args:
         meal_type: Type of meal - breakfast, lunch, or dinner
     """
-    data = load_data()
+    user_id = get_user_id(ctx)
     now = datetime.now()
 
-    meal_entry = {
+    supabase = get_supabase()
+    supabase.table("meals").insert({
+        "user_id": user_id,
         "type": meal_type,
         "date": now.strftime("%Y-%m-%d"),
         "start_time": now.strftime("%H:%M:%S"),
-        "end_time": None,
-    }
-
-    data["meals"].append(meal_entry)
-    save_data(data)
+    }).execute()
 
     return f"Started {meal_type} at {now.strftime('%H:%M')}"
 
 
 @mcp.tool
-def end_meal(meal_type: MealType) -> str:
+def end_meal(meal_type: MealType, ctx: Context) -> str:
     """
     Log the end of a meal.
 
     Args:
         meal_type: Type of meal - breakfast, lunch, or dinner
     """
-    data = load_data()
+    user_id = get_user_id(ctx)
     now = datetime.now()
     today = now.strftime("%Y-%m-%d")
 
-    # Find the most recent meal of this type today that hasn't ended
-    for meal in reversed(data["meals"]):
-        if (
-            meal["type"] == meal_type
-            and meal["date"] == today
-            and meal["end_time"] is None
-        ):
-            meal["end_time"] = now.strftime("%H:%M:%S")
-            save_data(data)
-            return f"Finished {meal_type} at {now.strftime('%H:%M')}"
+    supabase = get_supabase()
 
-    return f"No active {meal_type} found for today. Did you forget to start it?"
+    # Find the most recent meal of this type today that hasn't ended
+    result = supabase.table("meals").select("id").eq("user_id", user_id).eq("type", meal_type).eq("date", today).is_("end_time", "null").order("start_time", desc=True).limit(1).execute()
+
+    if not result.data:
+        return f"No active {meal_type} found for today. Did you forget to start it?"
+
+    # Update the meal with end time
+    meal_id = result.data[0]["id"]
+    supabase.table("meals").update({
+        "end_time": now.strftime("%H:%M:%S")
+    }).eq("id", meal_id).execute()
+
+    return f"Finished {meal_type} at {now.strftime('%H:%M')}"
 
 
 @mcp.tool
-def get_meals_today() -> str:
+def get_meals_today(ctx: Context) -> str:
     """Get all meals logged for today."""
-    data = load_data()
+    user_id = get_user_id(ctx)
     today = datetime.now().strftime("%Y-%m-%d")
 
-    today_meals = [m for m in data["meals"] if m["date"] == today]
+    supabase = get_supabase()
+    result = supabase.table("meals").select("*").eq("user_id", user_id).eq("date", today).order("start_time").execute()
 
-    if not today_meals:
+    if not result.data:
         return "No meals logged today."
 
     lines = [f"Meals for {today}:"]
-    for meal in today_meals:
+    for meal in result.data:
         start = meal["start_time"][:5]  # HH:MM
         end = meal["end_time"][:5] if meal["end_time"] else "ongoing"
         lines.append(f"  - {meal['type'].capitalize()}: {start} - {end}")
@@ -107,21 +106,24 @@ def get_meals_today() -> str:
 
 
 @mcp.tool
-def get_meals_history(days: int = 7) -> str:
+def get_meals_history(ctx: Context, days: int = 7) -> str:
     """
     Get meal history for the specified number of days.
 
     Args:
         days: Number of days to look back (default: 7)
     """
-    data = load_data()
+    user_id = get_user_id(ctx)
 
-    if not data["meals"]:
+    supabase = get_supabase()
+    result = supabase.table("meals").select("*").eq("user_id", user_id).order("date", desc=True).order("start_time").execute()
+
+    if not result.data:
         return "No meal history found."
 
     # Group meals by date
     meals_by_date: dict[str, list] = {}
-    for meal in data["meals"]:
+    for meal in result.data:
         date = meal["date"]
         if date not in meals_by_date:
             meals_by_date[date] = []

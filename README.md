@@ -4,6 +4,30 @@
 
 An MCP (Model Context Protocol) server for tracking meal times. Log when you start and finish breakfast, lunch, and dinner, and retrieve your meal history.
 
+## Supabase Setup
+
+1. Create a project at [supabase.com](https://supabase.com)
+
+2. Run this SQL in the SQL Editor to create the `meals` table:
+
+```sql
+create table meals (
+  id uuid default gen_random_uuid() primary key,
+  user_id text not null,
+  type text not null check (type in ('breakfast', 'lunch', 'dinner')),
+  date date not null,
+  start_time time not null,
+  end_time time,
+  created_at timestamp with time zone default now()
+);
+
+create index meals_user_id_date_idx on meals(user_id, date);
+```
+
+3. Get your credentials from Project Settings → API:
+   - `SUPABASE_URL` (Project URL)
+   - `SUPABASE_KEY` (anon/public key)
+
 ## Installation
 
 ```bash
@@ -16,6 +40,15 @@ pip install -r requirements.txt
 ```
 
 ## Usage
+
+### Environment Variables
+
+Set these before running:
+
+```bash
+export SUPABASE_URL="https://your-project.supabase.co"
+export SUPABASE_KEY="your-anon-key"
+```
 
 ### Running the server
 
@@ -40,7 +73,11 @@ Add to your Claude Code MCP configuration (`~/.claude/claude_desktop_config.json
   "mcpServers": {
     "meals": {
       "command": "/path/to/meals/.venv/bin/python",
-      "args": ["/path/to/meals/server.py"]
+      "args": ["/path/to/meals/server.py"],
+      "env": {
+        "SUPABASE_URL": "https://your-project.supabase.co",
+        "SUPABASE_KEY": "your-anon-key"
+      }
     }
   }
 }
@@ -66,16 +103,14 @@ Once configured, you can interact with the MCP through Claude:
 - "What did I eat today?" → triggers `get_meals_today()`
 - "Show my meal history for the past week" → triggers `get_meals_history(7)`
 
-## Data Storage
-
-Meal data is stored in `data/meals.json`. The `data` directory and file are created automatically when you log your first meal.
-
 ## Testing
 
 To verify the server loads correctly:
 
 ```bash
 source .venv/bin/activate
+export SUPABASE_URL="https://your-project.supabase.co"
+export SUPABASE_KEY="your-anon-key"
 python -c "from server import mcp; print('Tools:', [t.name for t in mcp._tool_manager._tools.values()])"
 ```
 
