@@ -15,13 +15,12 @@ create table meals (
   id uuid default gen_random_uuid() primary key,
   user_id text not null,
   type text not null check (type in ('breakfast', 'lunch', 'dinner')),
-  date date not null,
-  start_time time not null,
-  end_time time,
+  started_at timestamp with time zone not null,
+  ended_at timestamp with time zone,
   created_at timestamp with time zone default now()
 );
 
-create index meals_user_id_date_idx on meals(user_id, date);
+create index meals_user_id_started_idx on meals(user_id, started_at);
 ```
 
 3. Get your credentials from Project Settings → API:
